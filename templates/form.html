@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>Form Seleksi Kandidat</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+  <div class="container col-md-6 mt-5">
+    <div class="card p-4 shadow">
+      <h4 class="text-center text-primary mb-4 fw-bold">Masukkan Data Kandidat</h4>
+      <form action="/submit" method="POST">
+        <div class="mb-3">
+          <label>Nama</label>
+          <input type="text" class="form-control" name="nama" required>
+        </div>
+        <div class="mb-3">
+          <label>Universitas</label>
+          <input type="text" class="form-control" name="universitas" required>
+        </div>
+        <div class="mb-3">
+          <label>Jurusan</label>
+          <input type="text" class="form-control" name="jurusan" required>
+        </div>
+        <div class="mb-3">
+          <label>IPK</label>
+          <input type="number" step="0.01" class="form-control" name="ipk" required>
+        </div>
+        <div class="mb-3">
+          <label>TOEFL</label>
+          <input type="number" class="form-control" name="toefl" required>
+        </div>
+        <div class="mb-3">
+          <label>Umur</label>
+          <input type="number" class="form-control" name="umur" required>
+        </div>
+        <button type="submit" class="btn btn-primary w-100 mt-3">Lihat Hasil</button>
+      </form>
+    </div>
+  </div>
+</body>
+</html>

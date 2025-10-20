@@ -1,0 +1,8 @@
+body.bg-gradient {
+  background: linear-gradient(135deg, #0072bc, #00a0dc);
+  color: white;
+  font-family: 'Poppins', sans-serif;
+}
+.card {
+  border-radius: 15px;
+}
