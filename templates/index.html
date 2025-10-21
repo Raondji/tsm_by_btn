@@ -60,21 +60,24 @@
 
 <script>
 /* ====== GLOBAL ====== */
-let allData = [];       // hasil dari Flask (diproses)
-let rawData = [];       // data mentah CSV (dinormalisasi keys)
+let allData = [];
+let rawData = [];
+let currentPage = 1;
+const rowsPerPage = 15;
+let filteredData = [];
+
 let orderedHeaders = [
   "Hybrid_Ranking","Nama","Universitas","Jurusan","IPK","TOEFL","Umur",
   "Ijazah","Expected_Salary","Sertifikasi","SKCK","Pernah_Judi_Online",
   "Pernah_Kerja","Lama_Pengalaman_Kerja","Pernah_Ikut_Organisasi",
   "Durasi_Keaktifan_Organisasi","Pernah_Narkoba",
-  // skor & status harus berada setelah Pernah_Narkoba:
   "Hybrid_Score","Predictive_Score","Rule_Score","Total_Score","Status"
 ];
 
 /* ====== util ====== */
 function toNumber(value) {
   if (value === null || value === undefined) return 0;
-  if (typeof value === 'number') return value;
+  if (typeof value === "number") return value;
   let str = String(value).trim();
   if (str === "" || str.toLowerCase()==="null" || str.toLowerCase()==="undefined") return 0;
   str = str.replace(/[^0-9.\-]/g, "");
@@ -86,7 +89,7 @@ function normalizeKey(k) {
   return String(k).trim().replace(/\s+/g, "_");
 }
 
-/* ====== parse CSV (normalize headers -> underscores) ====== */
+/* ====== parse CSV ====== */
 function parseCSV(text) {
   const delimiter = text.includes(";") ? ";" : ",";
   const rows = text.split(/\r?\n/).filter(r => r.trim() !== "");
@@ -104,55 +107,40 @@ function parseCSV(text) {
   return { headers, data };
 }
 
-/* ====== Merge hasil Flask (processed) dengan rawData tanpa menimpa skor ======
-   - processed: array of objects returned by Flask (keys expected normalized already)
-   - rawData: array parsed from CSV (normalized keys)
-   Matching done by Nama (normalized).
-*/
+/* ====== Merge hasil Flask dengan rawData ====== */
 function mergeWithRawData(processedArray) {
-  // build lookup by Nama from rawData (normalize Nama)
   const lookup = {};
   rawData.forEach(r => {
     const n = (r["Nama"] || "").trim();
     if (!n) return;
     lookup[n] = r;
   });
-
   return processedArray.map(proc => {
     const name = (proc["Nama"] || "").trim();
     const original = lookup[name];
     if (!original) {
-      // still ensure normalized keys exist in returned object
       const out = { ...proc };
-      // make sure ordered keys exist (so table shows empty not undefined)
       orderedHeaders.forEach(k => { if (!(k in out)) out[k] = ""; });
       return out;
     }
-    // merge: original first, then proc (so proc overwrites fields if same name),
-    // but we then forcibly keep certain proc-ed values (scores & status)
     const merged = { ...original, ...proc };
-    // ensure the model values remain as in proc
     merged["Predictive_Score"] = proc["Predictive_Score"];
     merged["Rule_Score"] = proc["Rule_Score"];
     merged["Total_Score"] = proc["Total_Score"];
     merged["Status"] = proc["Status"];
     merged["Hybrid_Score"] = proc["Hybrid_Score"] ?? merged["Hybrid_Score"];
-    // make sure all expected keys exist
     orderedHeaders.forEach(k => { if (!(k in merged)) merged[k] = ""; });
     return merged;
   });
 }
 
-/* ====== Upload handler (single listener) ====== */
+/* ====== Upload handler ====== */
 document.getElementById("csvFile").addEventListener("change", async function(e) {
   const file = e.target.files[0];
   if (!file) return alert("Pilih file CSV dulu!");
-  // read raw CSV and normalize headers
   const text = await file.text();
   const parsed = parseCSV(text);
   rawData = parsed.data;
-
-  // send file to backend (Flask) which returns processed array
   const form = new FormData();
   form.append("file", file);
   try {
@@ -162,27 +150,19 @@ document.getElementById("csvFile").addEventListener("change", async function(e) 
       alert("Error dari server: " + (data.error || "Gagal memproses file di server"));
       return;
     }
-    // normalize keys in returned data: convert header keys to normalized form
-    // (some backends might return keys with spaces/other; ensure keys exist with normalized names)
     const normalizedProcessed = data.map(item => {
       const out = {};
       Object.keys(item).forEach(k => {
         const nk = normalizeKey(k);
         out[nk] = item[k];
       });
-      // also ensure we have known score fields accessible by normalized names
-      // if backend used other names, user must ensure backend keys match expected names.
       return out;
     });
-
-    // Merge with rawData (matching by Nama) and set into allData
     allData = mergeWithRawData(normalizedProcessed);
-
-    // sort by Total_Score descending (if numeric); keep non-numeric at bottom
     allData.sort((a,b) => toNumber(b["Total_Score"]) - toNumber(a["Total_Score"]));
-
-    // render
-    renderTable(allData);
+    filteredData = [...allData];
+    currentPage = 1;
+    renderTable();
     document.getElementById("filterSection").classList.remove("d-none");
   } catch (err) {
     console.error(err);
@@ -193,24 +173,28 @@ document.getElementById("csvFile").addEventListener("change", async function(e) 
 /* ====== Filter UI ====== */
 document.getElementById("statusFilter").addEventListener("change", function(e) {
   const f = e.target.value;
-  let filtered = allData;
-  if (f !== "Semua") filtered = allData.filter(r => (r["Status"] || "") === f);
-  renderTable(filtered);
+  if (f === "Semua") filteredData = [...allData];
+  else filteredData = allData.filter(r => (r["Status"] || "") === f);
+  currentPage = 1;
+  renderTable();
 });
 
-/* ====== Render table with strict orderedHeaders (forced order) ====== */
-function renderTable(data) {
-  if (!data || data.length === 0) {
+/* ====== Render Table ====== */
+function renderTable() {
+  const start = (currentPage - 1) * rowsPerPage;
+  const end = start + rowsPerPage;
+  const pageData = filteredData.slice(start, end);
+
+  if (pageData.length === 0) {
     document.getElementById("csvResult").innerHTML = "<p class='text-center text-danger'>Tidak ada data untuk ditampilkan.</p>";
     document.getElementById("scoreSummary").classList.add("d-none");
     return;
   }
 
-  // compute stats (Total_Score may be string; use toNumber)
-  const total = data.length;
-  const lulus = data.filter(d => (d["Status"] || "") === "Lolos").length;
-  const tidak = data.filter(d => (d["Status"] || "") === "Tidak Lolos").length;
-  const rata = total > 0 ? (data.reduce((s,d)=> s + toNumber(d["Total_Score"]),0)/total).toFixed(2) : "0.00";
+  const total = filteredData.length;
+  const lulus = filteredData.filter(d => (d["Status"] || "") === "Lolos").length;
+  const tidak = filteredData.filter(d => (d["Status"] || "") === "Tidak Lolos").length;
+  const rata = total > 0 ? (filteredData.reduce((s,d)=> s + toNumber(d["Total_Score"]),0)/total).toFixed(2) : "0.00";
 
   document.getElementById("totalKandidat").textContent = total;
   document.getElementById("totalLulus").textContent = lulus;
@@ -218,21 +202,14 @@ function renderTable(data) {
   document.getElementById("rataRataSkor").textContent = rata;
   document.getElementById("scoreSummary").classList.remove("d-none");
 
-  // build header row using orderedHeaders exactly
   const headerRow = orderedHeaders.map(h => `<th>${h.replace(/_/g," ")}</th>`).join("");
-
-  // build rows
-  const tableRows = data.map((row, idx) => {
-    // ensure Hybrid_Ranking is present and corresponds to sorted order
-    row["Hybrid_Ranking"] = idx + 1;
-    // ensure Hybrid_Score fallback to Total_Score if missing
+  const tableRows = pageData.map((row, idx) => {
+    row["Hybrid_Ranking"] = start + idx + 1;
     if (!row["Hybrid_Score"] && row["Total_Score"]) row["Hybrid_Score"] = row["Total_Score"];
-
     let cells = "";
     orderedHeaders.forEach(h => {
       let val = row[h];
       if (val === null || val === undefined) val = "";
-      // format score columns as numbers with 2 decimals
       if (["Rule_Score","Predictive_Score","Hybrid_Score","Total_Score"].includes(h)) {
         cells += `<td class="text-end"><strong>${toNumber(val).toFixed(2)}</strong></td>`;
       } else if (h === "Status") {
@@ -241,7 +218,6 @@ function renderTable(data) {
       } else if (h === "Hybrid_Ranking") {
         cells += `<td class="text-center fw-bold">${val}</td>`;
       } else {
-        // escape HTML in text values to be safe
         const safe = String(val).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
         cells += `<td>${safe}</td>`;
       }
@@ -250,14 +226,45 @@ function renderTable(data) {
   }).join("");
 
   document.getElementById("csvResult").innerHTML = `
-    <h5 class="mb-3 text-center text-secondary">Hasil Seleksi Kandidat (Urut Berdasarkan Total_Score Tertinggi)</h5>
+    <h5 class="mb-3 text-center text-secondary">
+      Hasil Seleksi Kandidat (Menampilkan ${rowsPerPage} Data per Halaman)
+    </h5>
     <table class="table table-striped table-bordered table-sm align-middle">
       <thead class="table-primary"><tr>${headerRow}</tr></thead>
       <tbody>${tableRows}</tbody>
     </table>
+    <div id="pagination" class="d-flex justify-content-end mt-2"></div>
+  `;
+  renderPagination();
+}
+
+/* ====== Pagination Control (Prev–Next only) ====== */
+function renderPagination() {
+  const totalPages = Math.ceil(filteredData.length / rowsPerPage);
+  const paginationDiv = document.getElementById("pagination");
+  if (totalPages <= 1) {
+    paginationDiv.innerHTML = "";
+    return;
+  }
+  paginationDiv.innerHTML = `
+    <button class="btn btn-outline-primary btn-sm me-2"
+      ${currentPage === 1 ? "disabled" : ""}
+      onclick="changePage(${currentPage - 1})">← Prev</button>
+    <button class="btn btn-outline-primary btn-sm"
+      ${currentPage === totalPages ? "disabled" : ""}
+      onclick="changePage(${currentPage + 1})">Next →</button>
   `;
 }
+
+/* ====== Ganti Halaman ====== */
+function changePage(num) {
+  const totalPages = Math.ceil(filteredData.length / rowsPerPage);
+  if (num < 1 || num > totalPages) return;
+  currentPage = num;
+  renderTable();
+}
 </script>
+
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 </body>
